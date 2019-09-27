@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt  # plotting
 from sklearn.metrics import r2_score, mean_squared_error, confusion_matrix, roc_auc_score
 import numpy as np
 import seaborn as sns
+import pandas as pd
 
 
 
@@ -32,6 +33,6 @@ def confusion_matrix_plot(model, y_true, y_pred, figsize=(10,5)):
     plot = sns.heatmap(cm, cmap= "YlGnBu", annot=annot, fmt='')
     plot.set_title('{} Confusion matrix'.format(model))
     fig = plot.get_figure()
-    if not os.path.isdir('./plots'):
-        os.mkdir('./plots')
-    fig.savefig('./plots/{}_cnf_mtrx.png'.format(model))
+    if not os.path.isdir('./data/results'):
+        os.mkdir('./data/results')
+    fig.savefig('./data/results/{}_cnf_mtrx.png'.format(model))
