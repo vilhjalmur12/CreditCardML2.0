@@ -27,6 +27,7 @@ from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
 DATASET_SIZE = 100
+SAFE_RATIO = 0.5
 DEBUG = False
 LOCAL = False
 SLACK_NOTIFY = False
@@ -35,7 +36,7 @@ SLACK_CHANNEL = ''
 if SLACK_NOTIFY:
     BOTKEY = os.environ['SLACK_BOT_TOKEN']
 
-VERSION = 1
+VERSION = '1_1'
 
 if not DEBUG:
     def warn(*args, **kwargs):
@@ -114,8 +115,6 @@ def save_results(names, mean_errors, train_scoring, test_scoring, aucrocs, best_
 ''' Import Dataset              '''
 '''-----------------------------'''
 dataset = pd.read_csv('./Data/findata.csv')
-X = dataset.iloc[:DATASET_SIZE, :-1].values
-Y = dataset.iloc[:DATASET_SIZE, 9]
 
 '''-----------------------------'''
 ''' Data exploration            '''
@@ -141,44 +140,53 @@ Y = dataset.iloc[:DATASET_SIZE, 9]
 ''' Feature Engineering         '''
 '''-----------------------------'''
 
-# Drop features who will lead to overfitting
-tmp_X = X[:, [0,2,3,5,7,8]]
-X = tmp_X
+# Drop non unique attributes and ones who could lead to overfitting
+dataset = dataset.drop(['zipcodeOri', 'zipMerchant', 'customer'], axis=1)
+
+# get a higher ratio of frauds
+SAFE_RATIO = 0.5
+fraud_df = dataset.loc[dataset['fraud'] == 1]
+safe_amount = int((len(fraud_df)*2)*SAFE_RATIO)
+safe_df = dataset.loc[dataset['fraud'] == 0][:safe_amount]
+norm_distri_df = pd.concat([fraud_df, safe_df])
+dataset = norm_distri_df.sample(frac=1, random_state=42)
+
+#dataset['customer'] = dataset['customer'].replace('\'','', regex=True)
+dataset['age'] = dataset['age'].replace('\'','', regex=True)
+dataset['gender'] = dataset['gender'].replace('\'','', regex=True)
+dataset['merchant'] = dataset['merchant'].replace('\'','', regex=True)
+dataset['category'] = dataset['category'].replace('\'','', regex=True)
 
 
 # Label encoder for categorical values
-label_encoder_X = LabelEncoder()
-X[:, 2] = label_encoder_X.fit_transform(X[:, 2])
-X[:, 3] = label_encoder_X.fit_transform(X[:, 3])
-X[:, 4] = label_encoder_X.fit_transform(X[:, 4])
+label_encoder = LabelEncoder()
+dataset['gender'] = label_encoder.fit_transform(dataset['gender'])
+dataset['merchant'] = label_encoder.fit_transform(dataset['merchant'])
+dataset['category'] = label_encoder.fit_transform(dataset['category'])
+dataset['age'] = label_encoder.fit_transform(dataset['age'])
+
+# Value still string in age, replace by highest integer
+dataset['age'] = dataset['age'].replace('U',7, regex=True)
 
 
-tmp_X = []
-for column in X:
-    tmp = []
-    for item in column:
-        if type(item) is str:
-            tmp.append(item.replace('\'', ''))
-        else:
-            tmp.append(item)
-    tmp_X.append(tmp)
-X = tmp_X
+# setting all int values to float
+for column in range(dataset.shape[1]):
+    dataset[:column] = dataset[:column] * 1.
 
-for column in range(0, len(X)):
-    if X[column][1] == 'U':
-        X[column][1] = 7
 
-# TODO: koma þessu í loopuna að ofanverðu
-tmp_X = []
-for column in X:
-    tmp_X.append([float(item) for item in column])
-X = np.array(tmp_X)
+# split into features and target
+if DEBUG:
+    X = dataset.iloc[:DATASET_SIZE,:-1].values
+    Y = dataset.iloc[:DATASET_SIZE,6]
+else:
+    X = dataset.iloc[:, :-1].values
+    Y = dataset.iloc[:, 6]
 
 
 # Dummy Encoding
 # Because one category should not be greater then any other
 sc_X = StandardScaler()
-hot_encoder = OneHotEncoder(categorical_features=[2,3,4])
+hot_encoder = OneHotEncoder(categorical_features=[1,2,4])
 X = hot_encoder.fit_transform(X).toarray()
 
 # Label encoder for Y
@@ -265,10 +273,10 @@ training_times = []
 # Init model array
 models = []
 models.append(('KNN', KNeighborsClassifier(), KNN_hyperparams))
-#models.append(('NaiveBayes', GaussianNB(), NB_hyperparams))
-#models.append(('DecisionTree', DecisionTreeClassifier(random_state=0), tree_hyperparams))
-#models.append(('SupportVectorMachine', SVC(random_state=0), SVC_hyperparams))
-#models.append(('NeuralNetwork', MLPClassifier(random_state=0, verbose=False), neural_hyperparams))
+models.append(('NaiveBayes', GaussianNB(), NB_hyperparams))
+models.append(('DecisionTree', DecisionTreeClassifier(random_state=0), tree_hyperparams))
+models.append(('SupportVectorMachine', SVC(random_state=0), SVC_hyperparams))
+models.append(('NeuralNetwork', MLPClassifier(random_state=0, verbose=False), neural_hyperparams))
 #models.append(('AdaBoost', AdaBoostClassifier(random_state=0), ada_hyperparams))
 #models.append(('LogisticRegression', LogisticRegression(random_state=0), LogiRegressor_hyperparams))
 #models.append(('RandomForest', RandomForestClassifier(random_state=0), RandForest_hyperparams))

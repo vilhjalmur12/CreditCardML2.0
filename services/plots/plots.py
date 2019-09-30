@@ -36,3 +36,4 @@ def confusion_matrix_plot(model, y_true, y_pred, figsize=(10,5)):
     if not os.path.isdir('./data/results'):
         os.mkdir('./data/results')
     fig.savefig('./data/results/{}_cnf_mtrx.png'.format(model))
+
