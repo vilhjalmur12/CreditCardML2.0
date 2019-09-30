@@ -7,36 +7,33 @@ import seaborn as sns
 import matplotlib.pyplot as plt  # plotting
 from mpl_toolkits.mplot3d import Axes3D
 from google.cloud import storage
-import slack
 
 from services.plots.plots import confusion_matrix_plot
 
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
-from sklearn.model_selection import cross_val_score, KFold, train_test_split
+from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-from sklearn.metrics import r2_score, mean_squared_error, confusion_matrix, roc_auc_score
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import r2_score, mean_squared_error
 from sklearn import preprocessing
 
 from sklearn.naive_bayes import GaussianNB
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.svm import SVC
 from sklearn.neural_network import MLPClassifier
-from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
+from sklearn.ensemble import AdaBoostClassifier
 from sklearn.linear_model import LogisticRegression
 
+'''-----------------------------'''
+''' CONSTANTS             '''
+'''-----------------------------'''
+
 DATASET_SIZE = 100
-SAFE_RATIO = 0.5
 DEBUG = False
-LOCAL = False
-SLACK_NOTIFY = False
-SLACK_CHANNEL = ''
-
-if SLACK_NOTIFY:
-    BOTKEY = os.environ['SLACK_BOT_TOKEN']
-
-VERSION = '1_1'
+LOCAL = True
+GCP = False
+VERSION = '1'
 
 if not DEBUG:
     def warn(*args, **kwargs):
@@ -45,14 +42,9 @@ if not DEBUG:
     warnings.warn = warn
 
 
-def send_slack_message(message):
-    slack_token = os.environ["SLACK_BOT_TOKEN"]
-    client = slack.WebClient(token=slack_token)
-
-    client.chat_postMessage(
-        channel=SLACK_CHANNEL,
-        text=message
-    )
+'''-----------------------------'''
+''' Helping Functions           '''
+'''-----------------------------'''
 
 def print_report(name, train_score, test_score, m_mean, best_para):
     print('Training: ', name)
@@ -98,43 +90,30 @@ def save_results(names, mean_errors, train_scoring, test_scoring, aucrocs, best_
     s.legend()
     fig.savefig('./data/results/training_time')
 
-'''
-    fig = plt.figure(figsize=(10, 10))
-    s = fig.add_subplot(111)
-    s.bar(result_obj['names'], result_obj['aucrocs'], label='AUCROC score')
-    s.set_ylim(0.5, 1.1)
-    s.set_xlabel('Models', fontsize=20)
-    s.set_ylabel('Aucroc', fontsize=20)
-    s.set_title('AUCROC score', fontsize=30)
-    s.legend()
-    fig.savefig('./data/results/aucrocs')
-'''
+def save_all_GCP():
+    BUCKET = storage.Client().bucket('birtai_storage')
+
+    model_dir = './data/results/'
+    result_dir = './data/models/'
+    version = 'v' + str(VERSION)
+    bucket_head_dir = 'CreditCardFraud_{}'.format(version) + '/'
+
+    for file in os.listdir(model_dir):
+        local_file = model_dir + file
+        blob = BUCKET.blob(bucket_head_dir + 'models/' + file)
+        blob.upload_from_filename(local_file)
+
+    for file in os.listdir(result_dir):
+        local_file = result_dir + file
+        blob = BUCKET.blob(bucket_head_dir + 'models/' + file)
+        blob.upload_from_filename(local_file)
 
 
 '''-----------------------------'''
 ''' Import Dataset              '''
 '''-----------------------------'''
-dataset = pd.read_csv('./Data/findata.csv')
+dataset = pd.read_csv('./data/findata.csv')
 
-'''-----------------------------'''
-''' Data exploration            '''
-'''-----------------------------'''
-
-# dataframe head
-
-# number of instances and attributes
-
-# feature data info
-
-# target data info
-
-# dataframe describe
-
-# dataframe parameter overview
-
-# correlation heatmap
-
-# correlation scatter plots (selected)
 
 '''-----------------------------'''
 ''' Feature Engineering         '''
@@ -151,7 +130,7 @@ safe_df = dataset.loc[dataset['fraud'] == 0][:safe_amount]
 norm_distri_df = pd.concat([fraud_df, safe_df])
 dataset = norm_distri_df.sample(frac=1, random_state=42)
 
-#dataset['customer'] = dataset['customer'].replace('\'','', regex=True)
+
 dataset['age'] = dataset['age'].replace('\'','', regex=True)
 dataset['gender'] = dataset['gender'].replace('\'','', regex=True)
 dataset['merchant'] = dataset['merchant'].replace('\'','', regex=True)
@@ -175,7 +154,7 @@ for column in range(dataset.shape[1]):
 
 
 # split into features and target
-if DEBUG:
+if LOCAL:
     X = dataset.iloc[:DATASET_SIZE,:-1].values
     Y = dataset.iloc[:DATASET_SIZE,6]
 else:
@@ -248,13 +227,6 @@ LogiRegressor_hyperparams = {
     'logisticregression__C': [0.001, 0.01, 0.1, 1, 10, 100]
 }
 
-RandForest_hyperparams = {
-    'randomforestclassifier__max_depth': [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, None],
-    'randomforestclassifier__max_features': ['auto', 'sqrt'],
-    'randomforestclassifier__min_samples_leaf': [1, 2, 4],
-    'randomforestclassifier__min_samples_split': [2, 5, 10],
-    'randomforestclassifier__n_estimators': [100, 200, 400, 800, 1200, 1600, 2000]
-}
 
 
 # define lists for train_accuracies, test_accuracies, mean_errors, names and best_params
@@ -263,7 +235,6 @@ model_test_scoring = []
 model_mean_error = []
 names = []
 best_param = []
-aucrocs = []
 training_times = []
 
 '''-----------------------------'''
@@ -277,9 +248,8 @@ models.append(('NaiveBayes', GaussianNB(), NB_hyperparams))
 models.append(('DecisionTree', DecisionTreeClassifier(random_state=0), tree_hyperparams))
 models.append(('SupportVectorMachine', SVC(random_state=0), SVC_hyperparams))
 models.append(('NeuralNetwork', MLPClassifier(random_state=0, verbose=False), neural_hyperparams))
-#models.append(('AdaBoost', AdaBoostClassifier(random_state=0), ada_hyperparams))
-#models.append(('LogisticRegression', LogisticRegression(random_state=0), LogiRegressor_hyperparams))
-#models.append(('RandomForest', RandomForestClassifier(random_state=0), RandForest_hyperparams))
+models.append(('AdaBoost', AdaBoostClassifier(random_state=0), ada_hyperparams))
+models.append(('LogisticRegression', LogisticRegression(random_state=0), LogiRegressor_hyperparams))
 
 '''-----------------------------'''
 ''' Training All                '''
@@ -294,6 +264,7 @@ def save_model(model, model_name):
 
 
 for name, model, params in models:
+    print('Started Training on {}'.format(name))
     start_time = time.time()
     pipeline = make_pipeline(preprocessing.StandardScaler(), model)
     grid_search = GridSearchCV(pipeline, params, cv=10, verbose=0, error_score=np.nan)
@@ -304,14 +275,12 @@ for name, model, params in models:
 
     train_pred = grid_search.predict(X_train)
     test_pred = grid_search.predict(X_test)
-    #rocauc_score = roc_auc_score(Y_test, test_pred)
 
     names.append(name)
     model_train_scoring.append(r2_score(Y_train, train_pred))
     model_test_scoring.append(r2_score(Y_test, test_pred))
     model_mean_error.append(mean_squared_error(Y_test, test_pred))
     best_param.append(grid_search.best_params_)
-    #aucrocs.append(rocauc_score)
     training_times.append(end_time - start_time)
 
     print_report(name, r2_score(Y_train, train_pred), r2_score(Y_test, test_pred), mean_squared_error(Y_test, test_pred), grid_search.best_params_)
@@ -323,28 +292,10 @@ for name, model, params in models:
 ''' Save all results and models '''
 '''-----------------------------'''
 
-def save_all_GCP():
-    BUCKET = storage.Client().bucket('birtai_storage')
-
-    model_dir = './data/results/'
-    result_dir = './data/models/'
-    version = 'v' + str(VERSION)
-    bucket_head_dir = 'CreditCardFraud_{}'.format(version) + '/'
-
-    for file in os.listdir(model_dir):
-        local_file = model_dir + file
-        blob = BUCKET.blob(bucket_head_dir + 'models/' + file)
-        blob.upload_from_filename(local_file)
-
-    for file in os.listdir(result_dir):
-        local_file = result_dir + file
-        blob = BUCKET.blob(bucket_head_dir + 'models/' + file)
-        blob.upload_from_filename(local_file)
-
 
 save_results(names, model_mean_error, model_train_scoring, model_test_scoring, None, best_param, training_times)
 
-if not LOCAL:
+if not LOCAL and GCP:
     save_all_GCP()
 
 
